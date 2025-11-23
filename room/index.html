@@ -1,0 +1,261 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Wraps — Room</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+</head>
+<body class="bg-gradient-to-br from-slate-900 to-slate-800 text-white min-h-screen p-6">
+<div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+
+  <!-- Left: player + controls -->
+  <section class="md:col-span-2 bg-slate-800 rounded-xl p-6 shadow-lg">
+    <div class="flex items-center justify-between mb-4">
+      <h2 id="room-title" class="text-2xl font-bold">Room</h2>
+      <div class="text-sm text-slate-300" id="room-sub"></div>
+    </div>
+
+    <!-- Now playing card -->
+    <div class="flex gap-4 items-center mb-4">
+      <img id="art" src="" alt="art" class="w-28 h-28 rounded-lg bg-slate-700 object-cover" />
+      <div>
+        <div id="track-name" class="text-lg font-semibold">—</div>
+        <div id="artist-name" class="text-sm opacity-80">—</div>
+        <div class="mt-2 text-xs opacity-70" id="device-info">Device: —</div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex gap-3 items-center mb-4">
+      <button id="play" class="px-4 py-2 rounded-lg bg-green-500 hover:bg-green-600">Play</button>
+      <button id="pause" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600">Pause</button>
+      <button id="skip" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600">Skip</button>
+
+      <div class="flex-1">
+        <input id="uri" placeholder="spotify:track:..." class="w-full p-2 rounded-lg bg-slate-900" />
+      </div>
+
+      <button id="add" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700">Add to queue</button>
+    </div>
+
+    <!-- Sync status -->
+    <div class="text-sm text-slate-300 mb-4" id="status">Connecting...</div>
+
+    <!-- Queue list -->
+    <div>
+      <h3 class="font-semibold mb-2">Queue</h3>
+      <ul id="queue" class="space-y-2"></ul>
+    </div>
+  </section>
+
+  <!-- Right: room info & participants -->
+  <aside class="bg-slate-800 rounded-xl p-6 shadow-lg">
+    <div class="mb-4">
+      <h3 class="text-lg font-bold">Room Info</h3>
+      <div class="mt-2 text-sm text-slate-300">Shareable link:</div>
+      <input id="share-link" class="w-full p-2 mt-2 text-xs rounded-lg bg-slate-900" readonly />
+      <button id="copy-link" class="mt-2 w-full px-3 py-2 bg-indigo-600 rounded-lg">Copy link</button>
+    </div>
+
+    <div class="mt-6">
+      <h4 class="font-semibold">Participants</h4>
+      <ul id="participants" class="mt-2 text-sm space-y-1"></ul>
+    </div>
+
+    <div class="mt-6 text-xs text-slate-400">
+      <p>Leader periodically sends a heartbeat with current playback time to keep peers in sync. If drift &gt;800ms, peers will auto-seek.</p>
+    </div>
+  </aside>
+</div>
+
+<script type="module">
+  import { loadToken } from '../js/auth.js';
+  import { initPlayer, apiGetTrack } from '../js/spotify.js';
+  import { createRoom } from '../js/peer.js';
+  import { renderQueueItem } from '../js/ui.js';
+
+  const token = loadToken();
+  // if (!token) location = `${location.origin}/Wraps/`; //TODO: FIX THISSSS
+
+  const roomId = location.hash.slice(1);
+  document.getElementById('room-title').textContent = `Room: ${roomId}`;
+  const link = `${location.origin}/Wraps/room/#${roomId}`;
+  document.getElementById('share-link').value = link;
+  document.getElementById('copy-link').onclick = async () => {
+    await navigator.clipboard?.writeText(link).catch(()=>{});
+    document.getElementById('copy-link').textContent = 'Copied!';
+    setTimeout(()=>document.getElementById('copy-link').textContent='Copy link',1200);
+  };
+
+  // init spotify player
+  let playerWrapper = null;
+  window.onSpotifyWebPlaybackSDKReady = async () => {
+    playerWrapper = await initPlayer(token, onPlayerReady, onPlayerState);
+    startRoom().then(() => console.log("Room started!"));
+  };
+
+  function onPlayerReady(deviceId) {
+    document.getElementById('device-info').textContent = `Device: ${deviceId}`;
+  }
+
+  async function onPlayerState(state) {
+    if (!state) return;
+    const track = state.track_window.current_track;
+    const art = track.album.images[0]?.url || '';
+    document.getElementById('art').src = art;
+    document.getElementById('track-name').textContent = track.name;
+    document.getElementById('artist-name').textContent = track.artists.map(a=>a.name).join(', ');
+    // update queue UI if leader
+  }
+
+  // start peer room
+  async function startRoom() {
+    const room = await createRoom(roomId, {
+      onConnectedPeers(peers){ // update participants list
+        const el = document.getElementById('participants');
+        el.innerHTML = '';
+        peers.forEach(p => {
+          const li = document.createElement('li');
+          li.textContent = p;
+          el.appendChild(li);
+        });
+      },
+      onMessage: async (msg, meta) => {
+        // handle incoming sync messages
+        // msg types: PLAY, PAUSE, SET_TRACK, HEARTBEAT, QUEUE_ADD, QUEUE_REMOVE, QUEUE_SYNC, SKIP
+        if (!playerWrapper) return;
+        console.log('IN MSG', msg);
+        if (msg.type === 'PLAY') {
+          playerWrapper.resume();
+        } else if (msg.type === 'PAUSE') {
+          playerWrapper.pause();
+        } else if (msg.type === 'SET_TRACK') {
+          await playerWrapper.playUri(msg.uri);
+        } else if (msg.type === 'HEARTBEAT') {
+          // leader heartbeat: { position_ms, timestamp, uri, paused }
+          // if I'm a peer — check drift
+          if (!room.isLeader) {
+            const localState = await playerWrapper.getCurrentState(); // { position, paused, uri }
+            if (!localState) return;
+            // compute expected leader position
+            const leaderPosition = msg.position_ms + (Date.now() - msg.timestamp);
+            const drift = Math.abs(localState.position - leaderPosition);
+            if (drift > 800) {
+              // seek to leader position
+              await playerWrapper.seek(Math.max(0, Math.floor(leaderPosition)));
+              document.getElementById('status').textContent = `Drift (${Math.round(drift)}ms) corrected`;
+              setTimeout(()=>document.getElementById('status').textContent='In sync', 1500);
+            }
+            // if different uri, load it
+            if (msg.uri && msg.uri !== localState.uri) {
+              await playerWrapper.playUri(msg.uri);
+            }
+            if (msg.paused && !localState.paused) {
+              await playerWrapper.pause();
+            }
+            if (!msg.paused && localState.paused) {
+              await playerWrapper.resume();
+            }
+          }
+        } else if (msg.type === 'QUEUE_ADD') {
+          room.queue.push(msg.item);
+          renderQueue();
+        } else if (msg.type === 'QUEUE_REMOVE') {
+          room.queue = room.queue.filter(i=>i.id !== msg.id);
+          renderQueue();
+        } else if (msg.type === 'SKIP') {
+          // leader asked to skip -> pop queue and play next
+          if (!room.isLeader) {
+            // peers just follow SET_TRACK events
+          }
+        } else if (msg.type === 'QUEUE_SYNC') {
+          room.queue = msg.queue.slice();
+          renderQueue();
+        }
+      }
+    });
+
+    // local queue UI
+    function renderQueue() {
+      const ul = document.getElementById('queue');
+      ul.innerHTML = '';
+      room.queue.forEach((item, idx) => {
+        const li = renderQueueItem(item, idx, {
+          onRemove: () => {
+            room.broadcast({ type: 'QUEUE_REMOVE', id: item.id });
+            room.queue = room.queue.filter(x=>x.id!==item.id);
+            renderQueue();
+          }
+        });
+        ul.appendChild(li);
+      });
+    }
+
+    // add track button
+    document.getElementById('add').onclick = async () => {
+      const uri = document.getElementById('uri').value.trim();
+      if (!uri) return;
+      // fetch metadata (if spotify)
+      let meta = { uri, title: uri, artist: '', id: Math.random().toString(36).slice(2,9) };
+      if (uri.startsWith('spotify:track:') || uri.includes('open.spotify.com/track/')) {
+        try {
+          const id = uri.split(':').pop().split('/').pop();
+          const track = await apiGetTrack(token, id);
+          meta.title = track.name;
+          meta.artist = track.artists.map(a=>a.name).join(', ');
+          meta.art = track.album.images[0]?.url;
+        } catch(e){ console.warn(e); }
+      }
+      // broadcast add
+      room.queue.push(meta);
+      room.broadcast({ type: 'QUEUE_ADD', item: meta });
+      renderQueue();
+      document.getElementById('uri').value = '';
+    };
+
+    // controls -> broadcast
+    document.getElementById('play').onclick = () => {
+      playerWrapper.resume();
+      room.broadcast({ type: 'PLAY' });
+    };
+    document.getElementById('pause').onclick = () => {
+      playerWrapper.pause();
+      room.broadcast({ type: 'PAUSE' });
+    };
+    document.getElementById('skip').onclick = () => {
+      // leader picks next in queue and sends SET_TRACK
+      if (room.queue.length === 0) return;
+      const next = room.queue.shift();
+      room.broadcast({ type: 'QUEUE_SYNC', queue: room.queue });
+      room.broadcast({ type: 'SET_TRACK', source: item.source, uri: item.uri, meta: item });
+
+      // leader also play
+      playerWrapper.playUri(next.uri);
+      renderQueue();
+    };
+
+    // initial queue sync if leader
+    if (room.isLeader) {
+      // leader starts heartbeat
+      room.startHeartbeats(async () => {
+        // include currently playing uri and position
+        const state = await playerWrapper.getCurrentState();
+        if (!state) return null;
+        return {
+          position_ms: state.position,
+          uri: state.uri,
+          paused: state.paused
+        };
+      });
+    }
+
+    // expose small helpers
+    window.room = room;
+    renderQueue();
+  }
+</script>
+</body>
+</html>

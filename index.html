@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Wraps — Listen Together</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-white min-h-screen flex items-center justify-center">
+<div class="max-w-2xl w-full p-8 rounded-2xl bg-black/50 backdrop-blur-lg shadow-lg">
+  <h1 class="text-4xl font-extrabold mb-2">Wraps</h1>
+  <p class="text-slate-300 mb-6">Synchronized listening for Spotify (and, later, YouTube). Sign in, create or join a room, and listen together.</p>
+
+  <div class="space-y-4">
+    <button id="login" class="w-full py-3 rounded-lg bg-emerald-500 hover:bg-emerald-600 font-semibold">Sign in with Spotify</button>
+
+    <a href="home/index.html" id="continue" class="block text-center text-slate-300 underline">Continue to app (if already signed in)</a>
+
+    <p class="text-xs text-slate-400 mt-4">Wraps uses the Spotify Web Playback SDK — each participant plays locally on their account. Spotify Premium required for playback.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { beginAuth, finishAuthIfPresent } from './js/auth.js';
+  document.getElementById('login').addEventListener('click', beginAuth);
+  finishAuthIfPresent();
+</script>
+</body>
+</html>

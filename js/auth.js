@@ -83,9 +83,9 @@ export async function finishAuthIfPresent(){
     };
     localStorage.setItem(TOKEN_KEY, JSON.stringify(tokenObj));
     // cleanup URL
-    history.replaceState({}, '', '/index.html');
+    history.replaceState({}, '', `${location.origin}/Wraps/`);
     // go to home
-    location = 'index.html';
+    location = `${location.origin}/Wraps/`;
 }
 
 export function loadToken(){

@@ -78,7 +78,7 @@
   import { renderQueueItem } from '../js/ui.js';
 
   const token = loadToken();
-  // if (!token) location = `${location.origin}/Wraps/`; //TODO: FIX THISSSS
+  if (!token) location = `${location.origin}/Wraps/`;
 
   const roomId = location.hash.slice(1);
   document.getElementById('room-title').textContent = `Room: ${roomId}`;

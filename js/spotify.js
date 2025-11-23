@@ -6,7 +6,7 @@ export async function initPlayer(accessToken, onReady = ()=>{}, onStateChange = 
             getOAuthToken: cb => { cb(accessToken); }
         });
 
-        player.addEventListener('ready', ({ device_id }) => {
+        player.addListener('ready', ({ device_id }) => {
             onReady(device_id);
             // return wrapper
             const wrapper = {
@@ -36,13 +36,13 @@ export async function initPlayer(accessToken, onReady = ()=>{}, onStateChange = 
                 }
             };
 
-            player.addEventListener('player_state_changed', (state) => onStateChange(state));
+            player.addListener('player_state_changed', (state) => onStateChange(state));
             resolve(wrapper);
         });
 
-        player.addEventListener('initialization_error', ({ message }) => reject(message));
-        player.addEventListener('authentication_error', ({ message }) => reject(message));
-        player.addEventListener('account_error', ({ message }) => reject(message));
+        player.addListener('initialization_error', ({ message }) => reject(message));
+        player.addListener('authentication_error', ({ message }) => reject(message));
+        player.addListener('account_error', ({ message }) => reject(message));
 
         player.connect();
     });

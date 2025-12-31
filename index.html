@@ -1,29 +1,28 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8">
   <title>Wraps — Listen Together</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script type="module" src="./index.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="assets/css/style.css">
 </head>
-<body class="bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-white min-h-screen flex items-center justify-center">
-<div class="max-w-2xl w-full p-8 rounded-2xl bg-black/50 backdrop-blur-lg shadow-lg">
-  <h1 class="text-4xl font-extrabold mb-2">Wraps</h1>
-  <p class="text-slate-300 mb-6">Synchronized listening for Spotify (and, later, YouTube). Sign in, create or join a room, and listen together.</p>
-
-  <div class="space-y-4">
-    <button id="login" class="w-full py-3 rounded-lg bg-emerald-500 hover:bg-emerald-600 font-semibold">Sign in with Spotify</button>
-
-    <a href="home/" id="continue" class="block text-center text-slate-300 underline">Continue to app (if already signed in)</a>
-
-    <p class="text-xs text-slate-400 mt-4">Wraps uses the Spotify Web Playback SDK — each participant plays locally on their account. Spotify Premium required for playback.</p>
+<body class="h-screen w-screen font-sans">
+<div class="flex h-full">
+  <div class="w-1/2 bg-gradient-to-br from-indigo-700 to-purple-700 text-white flex flex-col justify-center p-16">
+    <h1 class="text-6xl font-bold mb-6">Wraps</h1>
+    <p class="text-xl mb-8">Listen to Spotify and YouTube together in real-time with friends. Host a room or join one instantly.</p>
+    <div class="mb-4">
+      <a href="home/" class="px-6 py-3 bg-white text-indigo-700 font-semibold rounded-lg mr-4 hover:bg-gray-200 transition">Enter</a>
+      <button id="spotifyLogin" class="px-6 py-3 bg-green-500 rounded-lg text-black font-semibold hover:bg-green-600 mb-4">
+        Sign in with Spotify
+      </button>
+    </div>
+  </div>
+  <div class="w-1/2 bg-indigo-100 flex items-center justify-center">
+    <img src="assets/logo.svg" alt="Wraps Logo" class="w-3/4 h-3/4 object-contain">
   </div>
 </div>
-
-<script type="module">
-  import { beginAuth, finishAuthIfPresent } from './js/auth.js';
-  document.getElementById('login').addEventListener('click', beginAuth);
-  finishAuthIfPresent();
-</script>
 </body>
 </html>

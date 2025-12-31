@@ -1,4 +1,3 @@
-// js/auth.js
 export const CLIENT_ID = "632da48f28a640ca920d3f3bba68e77e";
 export const REDIRECT_URI = `${location.origin}/Wraps/`;
 const SCOPE = "streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state";
@@ -93,8 +92,8 @@ export function loadToken(){
     if (!raw) return null;
     const obj = JSON.parse(raw);
     if (Date.now() > obj.expires_at) {
-        // try refresh
-        return null; // for simplicity; token refresh can be implemented using refresh_token
+        localStorage.removeItem(TOKEN_KEY);
+        return null;
     }
     return obj.access_token;
 }

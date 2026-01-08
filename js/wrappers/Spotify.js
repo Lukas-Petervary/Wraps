@@ -25,6 +25,8 @@ export default class SpotifyWrapper extends AbstractWrapper {
         };
     }
 
+    getType() {return 'spotify'}
+
     async _waitForReady(timeoutMs = 10000) {
         const start = Date.now();
         while (!this.ready) {
@@ -154,19 +156,6 @@ export default class SpotifyWrapper extends AbstractWrapper {
         } catch (e) {
             console.warn('[SpotifyWrapper] getCurrentTime failed', e);
             return 0;
-        }
-    }
-
-    async getDuration() {
-        if (!this.player || !this.isPremium) return null;
-        try {
-            const state = await this.player.getCurrentState();
-            if (!state || !state.track_window || !state.track_window.current_track) return null;
-            const ms = state.track_window.current_track.duration_ms;
-            return ms ? (ms / 1000) : null;
-        } catch (e) {
-            console.warn('[SpotifyWrapper] getDuration failed', e);
-            return null;
         }
     }
 

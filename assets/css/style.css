@@ -1,1 +1,44 @@
-body { font-family: 'Inter', sans-serif; }
+body { font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; }
+
+:root {
+    --accent-color-primary: #4338ca;
+    --accent-color-secondary: #7e22ce;
+}
+
+[disabled] { opacity: .5; }
+
+/*data driven color themes ???*/
+/*maybe add color wheel dropdown for user to choose colors*/
+:root[data-theme='light'] {
+    --color1: #e0e7ff;
+    --color2: #ad8eff;
+    --color3: #ccc;
+
+    --text-color: #09090b;
+    --text-color2: #777;
+}
+
+:root[data-theme='dark'] {
+    --color1: #0f172a;
+    --color2: #1e293b;
+    --color3: #334155;
+
+    --text-color: #e0e7ff;
+    --text-color2: #aaa;
+}
+
+.bg-gradient { background: linear-gradient(to bottom right, var(--accent-color-primary), var(--accent-color-secondary)) }
+
+.bg-theme { background-color: var(--color1) }
+.bg-theme2 { background-color: var(--color2) }
+.bg-theme3 { background-color: var(--color3) }
+
+.text-theme { color: var(--text-color) }
+.text-theme2 { color: var(--text-color2) }
+
+#queue-item {
+    list-style: none;
+    cursor: grab;
+}
+
+#queue-item .dragging { opacity: 0.5; }

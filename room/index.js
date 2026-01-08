@@ -1,14 +1,16 @@
 import SpotifyWrapper from "../js/wrappers/Spotify.js";
 import YouTubeWrapper from "../js/wrappers/Youtube.js";
-import { getParam } from "../js/util.js";
+import { formatTime, getParam, parseTrackInput } from "../js/util.js";
+import { Track } from "../js/wrappers/AbstractWrapper.js";
+import { Lobby, User } from "../js/P2PLobby.js";
 
 class Model {
     constructor() {
-        /** @type {{spotify: SpotifyWrapper, youtube: YouTubeWrapper}} */
-        this.wrappers = {
-            spotify: new SpotifyWrapper(),
-            youtube: new YouTubeWrapper(),
-        }
+        /** @type {{string: AbstractWrapper}} */
+        this.wrappers = {}
+
+        this.registerWrapper(new SpotifyWrapper());
+        this.registerWrapper(new YouTubeWrapper());
 
         /** @typedef {AbstractWrapper} */
         this.currentWrapper = null;
@@ -17,9 +19,17 @@ class Model {
         /** @typedef {[Track]} */
         this.queue = [];
 
-        this.paused = false;
+        this.paused = true;
 
         this.addCallbacks({});
+    }
+
+    /**
+     * Registers a provided wrapper with the model
+     * @param {AbstractWrapper} wrapper provided instance wrapper object
+     */
+    registerWrapper(wrapper) {
+        this.wrappers[wrapper.getType()] = wrapper;
     }
 
     /**
@@ -38,6 +48,7 @@ class Model {
             onAddQueue: _,
             onRemoveQueue: _,
             onMoveQueue: _,
+            onSetQueue: _,
         }, callbacks);
     }
 
@@ -46,46 +57,46 @@ class Model {
      * @param {Track} track the track to play
      */
     async load(track) {
+        if (!track) return;
+
         this.currentTrack = track;
         this.currentWrapper = this.wrappers[this.currentTrack.source];
         await this.currentWrapper.playUri(this.currentTrack.uri)
         this.paused = false;
+
         this.events.onLoad(track);
     }
 
     /**
      * Resumes current track if available, otherwise plays next track in queue
      */
-    async play() {
-        if (!this.currentWrapper)
-            return console.warn("attempted playback without active wrapper");
+    async resume() {
         if (this.currentTrack !== null)
             this.currentWrapper.resume();
-        else await this.load(this.queue.shift());
-        this.events.onPlay(this.currentTrack);
+        else if (this.queue.length > 0)
+            await this.load(this.queue.shift());
+        else return;
+        this.paused = false;
+        await this.events.onPlay(this.currentTrack);
     }
 
     /**
      * Pauses current track, otherwise defaults to unpaused
      */
-    pause() {
-        if (this.currentTrack !== null) {
-            this.currentWrapper.pause();
-            this.paused = true;
-        } else {
-            this.paused = false;
-        }
-        this.events.onPause(this.currentTrack);
+    async pause() {
+        await this.currentWrapper?.pause();
+        this.paused = true;
+        await this.events.onPause(this.currentTrack);
     }
 
     /**
      * Sets playback time of current track
      * @param {Number} time time (in seconds) to set the current song to
      */
-    seek(time) {
+    async seek(time) {
         if (this.currentTrack !== null)
-            this.currentWrapper.seek(time);
-        this.events.onSeek(this.currentTrack, time);
+            await this.currentWrapper.seek(time);
+        await this.events.onSeek(this.currentTrack, time);
     }
 
     /**
@@ -93,7 +104,7 @@ class Model {
      */
     async skip() {
         if (this.queue.length === 0) {
-            this.currentWrapper?.pause?.();
+            this.currentWrapper?.pause();
             this.currentTrack = null;
             return;
         }
@@ -108,6 +119,7 @@ class Model {
      * @return {Track} returns the track added to queue
      */
     addQueue(track) {
+        if (!track) return null;
         this.queue.push(track);
         this.events.onAddQueue(track);
         return track;
@@ -133,9 +145,20 @@ class Model {
     moveQueue(idx, destination = -1) {
         const [track] = this.queue.splice(idx, 1);
         this.queue.splice(Math.max(destination, 0), 0, track);
-        if (destination < 0) this.load(this.queue.shift());
-        this.events.onMoveQueue(track);
+
+        if (destination >= 0) this.events.onMoveQueue(track);
+        else this.load(this.queue.shift()).then(() => this.events.onMoveQueue(track));
+
         return track;
+    }
+
+    /**
+     * Overwrite the current queue with another track list
+     * @param {[Track]} queue queue to replace current track list
+     */
+    setQueue(queue) {
+        this.queue = queue;
+        this.events.onSetQueue(queue);
     }
 
     /**
@@ -147,6 +170,7 @@ class Model {
     }
 }
 
+// TODO:
 class View {
     constructor() {
         this.trackDisplay = {
@@ -190,38 +214,96 @@ class View {
 
     init() {
         // set dynamic page assets on load
-        const roomId = getParam('host') || getParam('join') || getParam('room') || '';
-        const isHost = !!getParam('host');
+        this.roomId = getParam('host') || getParam('join') || getParam('room') || '';
+        this.isHost = !!getParam('host');
 
         const roleLabel = document.getElementById('roleLabel');
-        roleLabel.textContent = isHost ? 'Host' : 'Client';
-        document.getElementById('roomIdLabel').textContent = roomId ? `Room: ${roomId}` : '';
+        roleLabel.textContent = this.isHost ? 'Host' : 'Client';
+        document.getElementById('roomIdLabel').textContent = this.roomId ? `Room: ${this.roomId}` : '';
 
-        if (isHost) {
+        if (this.isHost) {
             document.getElementById('hostPanel').classList.remove('hidden');
         }
 
-        // TODO: Fix event types for user interaction
         // bind user input event listeners to widgets through events object
-        const _reg = (a,b,c) => a.addEventListener(b, (event) => c(event));
-        _reg(this.playerControls.playButton, 'click', this.events.playButtonClick);
-        _reg(this.playerControls.pauseButton, 'click', this.events.pauseButtonClick);
-        _reg(this.playerControls.seekBar, 'click', this.events.seekBarInteract);
-        _reg(this.playerControls.volumeBar, 'click', this.events.volumeBarInteract);
+        const _reg = (a,b,c) => a.addEventListener(b, c);
+        _reg(this.playerControls.playButton, 'click', async e => await this.events.playButtonClick(e));
+        _reg(this.playerControls.pauseButton, 'click', async e => await this.events.pauseButtonClick(e));
+        _reg(this.playerControls.seekBar, 'click', async e => await this.events.seekBarInteract(e));
+        _reg(this.playerControls.volumeBar, 'click', e => this.events.volumeBarInteract(e));
 
-        _reg(this.queueDisplay.addTextfield, 'click', this.events.queueTextField);
-        _reg(this.queueDisplay.addButton, 'click', this.events.queueAddButton);
-        _reg(this.queueDisplay.addDropBox, 'click', this.events.queueDropBox);
+        _reg(document.getElementById('queueAddForm'), 'submit', e => e.preventDefault());
+        _reg(this.queueDisplay.addTextfield, 'click', e => this.events.queueTextField(e));
+        _reg(this.queueDisplay.addButton, 'click', e => this.events.queueAddButton(e));
 
-        _reg(this.hostControls.strictMode, 'click', this.events.strictModeClick);
-        _reg(this.hostControls.lockRoom, 'click', this.events.lockRoomClick);
-        _reg(this.hostControls.addQueue, 'click', this.events.addQueueClick);
-        _reg(this.hostControls.removeQueue, 'click', this.events.removeQueueClick);
-        _reg(this.hostControls.rearrangeQueue, 'click', this.events.rearrangeQueueClick);
-        _reg(this.hostControls.pausePlay, 'click', this.events.pausePlayClick);
-        _reg(this.hostControls.skip, 'click', this.events.skipSongClick);
+        if (this.isHost) {
+            _reg(this.hostControls.lockRoom, 'change', e => this.events.lockRoomClick(e));
+            _reg(this.hostControls.addQueue, 'change', e => this.events.addQueueClick(e));
+            _reg(this.hostControls.removeQueue, 'change', e => this.events.removeQueueClick(e));
+            _reg(this.hostControls.rearrangeQueue, 'change', e => this.events.rearrangeQueueClick(e));
+            _reg(this.hostControls.pausePlay, 'change', e => this.events.pausePlayClick(e));
+            _reg(this.hostControls.skip, 'change', e => this.events.skipSongClick(e));
 
-        // other stuff to do ...
+            _reg(this.hostControls.strictMode, 'change', (event) => {
+                ;[
+                    this.hostControls.addQueue,
+                    this.hostControls.removeQueue,
+                    this.hostControls.rearrangeQueue,
+                    this.hostControls.pausePlay,
+                    this.hostControls.skip
+                ].forEach((widget) => {
+                    if (event.target.checked) {
+                        if (widget.checked)
+                            widget.click();
+                        widget.disabled = true;
+                    } else {
+                        widget.disabled = false;
+                    }
+                });
+            });
+        } else {
+            document.getElementById('hostPanel').remove();
+        }
+
+        let draggedItem = null;
+        let dragStartIdx = null;
+        _reg(this.queueDisplay.queueList, 'dragstart', (event) => {
+            draggedItem = event.target;
+            dragStartIdx = [...this.queueDisplay.queueList.children].indexOf(draggedItem);
+            event.target.classList.add('dragging');
+        });
+        _reg(this.queueDisplay.queueList, 'dragend', (event) => {
+            event.target.classList.remove("dragging");
+            const dragEndIdx = [...this.queueDisplay.queueList.children].indexOf(draggedItem);
+            if (dragEndIdx !== dragStartIdx)
+                this.events.queueReorder(dragStartIdx, dragEndIdx);
+            draggedItem = dragStartIdx = null;
+        });
+        _reg(this.queueDisplay.queueList, 'dragover', (event) => {
+            event.preventDefault();
+
+            const afterElement = getDragAfterElement(this.queueDisplay.queueList, event.clientY);
+            if (afterElement == null) {
+                this.queueDisplay.queueList.appendChild(draggedItem);
+            } else if (afterElement !== draggedItem) {
+                this.queueDisplay.queueList.insertBefore(draggedItem, afterElement);
+            }
+        });
+
+        function getDragAfterElement(queue, y) {
+            const draggableElements = [...queue.querySelectorAll("li:not(.dragging)")];
+
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
     }
 
     /**
@@ -230,7 +312,7 @@ class View {
      */
     addCallbacks(callbacks) {
         /** @param {Event} event */
-        const _ = (event) => {};
+        const _ = (event) => console.log(event.target.id, event);
         this.events = Object.assign(this.events ?? {
             playButtonClick: _,
             pauseButtonClick: _,
@@ -239,7 +321,7 @@ class View {
 
             queueTextField: _,
             queueAddButton: _,
-            queueDropBox: _,
+            queueReorder: (startIdx, endIdx) => console.log(startIdx, endIdx),
 
             strictModeClick: _,
             lockRoomClick: _,
@@ -257,18 +339,20 @@ class View {
      * @param {Track} track the track to display
      */
     displayTrack(track) {
-        this.trackDisplay.currentTime.textContent = '0:00';
-        this.trackDisplay.duration.textContent = '0:00';
-        this.playerControls.seekBar.value = 0;
-
         if (!track) {
             this.trackDisplay.trackLabel.textContent = 'No track';
             this.trackDisplay.artistLabel.textContent = '';
+            this.trackDisplay.currentTime.textContent = '0:00';
+            this.trackDisplay.duration.textContent = '0:00';
             this.playerControls.seekBar.max = 0;
+            this.playerControls.seekBar.value = 0;
         } else {
             this.trackDisplay.trackLabel.textContent = track.title;
             this.trackDisplay.artistLabel.textContent = track.author;
+            this.trackDisplay.currentTime.textContent = formatTime(track.time);
+            this.trackDisplay.duration.textContent = formatTime(track.duration);
             this.playerControls.seekBar.max = track.duration;
+            this.playerControls.seekBar.value = track.time;
         }
     }
 
@@ -276,35 +360,330 @@ class View {
      * Sets the seek bar time to a specific number of seconds
      * @param {Number} time
      */
-    displayTime(time) {}
+    setSeekBarTime(time) {
+        this.playerControls.seekBar.value = time;
+    }
 
     /**
-     * Returns an html object for a queue entry representing the provided track
+     * Returns an html string for a queue entry representing the provided track
      * @param {Track} track the track to create a queue entry for
+     * @return {string} the formatted queue display element for a provided track
      */
     createQueueEntry(track) {
-
+        return `
+<li draggable="true" data-uuid="${track.uuid}">
+    <static-partial 
+        src="/assets/partials/queueElement.html" 
+        params='{
+            "title":"${track.title}",
+            "author":"${track.author}",
+            "duration":"${formatTime(track.duration)}"
+        }'
+        class="
+            queue-item
+            group
+            flex items-center gap-3
+            px-3 py-2
+            rounded-lg
+            bg-theme3
+            hover:bg-zinc-800
+            active:bg-zinc-700
+            transition-colors
+            cursor-grab
+            select-none
+        "
+    ></static-partial>
+</li>
+`
     }
 
     /**
      * Renders a list of tracks to the UI
      * @param {[Track]} trackList
      */
-    renderQueue(trackList) {}
-}
-
-class Controller {
-    constructor(model, view) {
-
+    renderQueue(trackList) {
+        this.queueDisplay.queueCount.innerHTML = trackList.length;
+        this.queueDisplay.queueList.innerHTML = trackList
+            .map(this.createQueueEntry)
+            .join('');
     }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
+// TODO:
+class Controller {
+    /**
+     * @param {Model} model
+     * @param {View} view
+     */
+    constructor(model, view) {
+        this.model = model;
+        this.view = view;
+        this.network = view.isHost ? new Lobby(view.roomId) : new User();
+        this.DESYNC_THRESHOLD = 2;
+    }
+
+    /**
+     * Parses and returns track from textfield UI element
+     * @return {Track | null} returns the track from the textfield UI
+     */
+    async getTrackFromURI() {
+        const input = this.view.queueDisplay.addTextfield.value;
+        let track = parseTrackInput(input);
+        if (!track) {
+            console.error('No track found', input);
+            return null;
+        }
+
+        const wrapper = this.model.wrappers[track.source];
+        const {title, author, duration} = await wrapper.fetchUri(track.uri);
+
+        track.title = title;
+        track.author = author;
+        track.duration = duration;
+        return track;
+    }
+
+    /**
+     * main entrypoint for wiring all events to model and view
+     */
+    async init() {
+        // wire networking events
+        if (this.view.isHost)   await this._hostNetworking();
+        else                    await this._clientNetworking();
+
+        // update+sync track and display time on pause&play
+        let updateInterval = null;
+        const _setVisualTime = time => {
+            if (this.model.currentTrack) this.model.currentTrack.time = time;
+            this.view.playerControls.seekBar.value = time;
+            this.view.trackDisplay.currentTime.textContent = formatTime(time);
+        };
+        const _rerender = () => {
+            this.view.renderQueue(this.model.queue);
+            this.view.displayTrack(this.model.currentTrack);
+        };
+        this.model.addCallbacks({
+            onPlay: async () => {
+                this.view.playerControls.playButton.disabled = true;
+                this.view.playerControls.pauseButton.disabled = false;
+
+                const curTime = await this.model.currentWrapper?.getCurrentTime();
+                _setVisualTime(curTime);
+                updateInterval = setInterval(async () => {
+                    _setVisualTime(this.model.currentTrack.time + 1);
+                }, 1000);
+                _rerender();
+            },
+            onPause: async () => {
+                this.view.playerControls.playButton.disabled = false;
+                this.view.playerControls.pauseButton.disabled = true;
+
+                const curTime = await this.model.currentWrapper?.getCurrentTime();
+                _setVisualTime(curTime);
+                clearInterval(updateInterval);
+            },
+        });
+
+        // redraw UI on model changes
+        this.model.addCallbacks({
+            onSeek: (track, time) => _setVisualTime(time),
+            onSkip: _rerender,
+            onLoad: _rerender,
+            onAddQueue: _rerender,
+            onRemoveQueue: _rerender,
+            onMoveQueue: _rerender,
+            onSetQueue: _rerender,
+        });
+
+        const _packet = (t, data = {}) => {
+            if (this.view.isHost) {
+                this.network.sendPacket({
+                    type: 'queue:sync',
+                    queue: this.model.queue.map(t => t.toJSON())
+                });
+                this.network.sendPacket({
+                    type: 'playback:sync',
+                    track: this.model.currentTrack?.toJSON(),
+                    paused: this.model.paused,
+                });
+            } else this.network.sendPacket({type: t, ...data});
+        };
+
+        this.view.addCallbacks({
+            playButtonClick: async _ => {
+                if (this.view.isHost)
+                    await this.model.resume();
+                _packet('playback:play');
+            },
+            pauseButtonClick: async _ => {
+                if (this.view.isHost)
+                    await this.model.pause();
+                _packet('playback:pause');
+            },
+            seekBarInteract: async e => {
+                if (this.view.isHost)
+                    await this.model.seek(e.target.value);
+                _packet('playback:seek', {time: e.target.value});
+            },
+            volumeBarInteract: e => this.model.setVolume(e.target.value),
+
+            queueReorder: (a, b) => {
+                if (this.view.isHost)
+                    this.model.moveQueue(a, b);
+                _packet('queue:move', {idx: a, dest: b});
+            },
+            queueAddButton: async _ => {
+                const track = await this.getTrackFromURI();
+                this.view.queueDisplay.addTextfield.value = '';
+                if (!track) return;
+
+                if (this.view.isHost)
+                    this.model.addQueue(track);
+                _packet('queue:add', {track: track.toJSON()});
+            },
+        });
+    }
+
+    /**
+     * initializes host connection and registers packet behavior
+     */
+    async _hostNetworking() {
+        // initialize lobby
+        await this.network.initLobby({
+            onStart: (id) => console.debug(`[Lobby] Lobby started with id ${id}`),
+            onConnection: (conn) => console.debug(`[Lobby] Connection started with ${conn.peer.id}`),
+            onOpen: (conn) => console.debug(`[Lobby] Connection opened with ${conn.peer.id}`),
+            onClose: (conn) => console.debug(`[Lobby] Connection closed with ${conn.peer.id}`),
+            onData: (data) => console.debug(`[Lobby] Data received:`, data),
+        });
+
+        // register packet callbacks
+        const _queueSync = () => this.network.sendPacket({
+            type: 'queue:sync',
+            queue: this.model.queue.map(t => t.toJSON())
+        });
+        const _playbackSync = () => this.network.sendPacket({
+            type: 'playback:sync',
+            track: this.model.currentTrack?.toJSON(),
+            paused: this.model.paused,
+        });
+
+        // this._hostSyncInterval = setInterval(() => _playbackSync(), this.DESYNC_THRESHOLD * 1000);
+
+        this.network.onPacket('queue:add', (data, sender) => {
+            if (this.view.hostControls.addQueue.checked) {
+                data.addedBy = sender;
+                this.model.addQueue(Track.fromJSON(data.track));
+                console.debug('[Lobby] queue:add', sender);
+            }
+            _queueSync();
+        });
+        this.network.onPacket('queue:remove', (data, sender) => {
+            if (this.view.hostControls.addQueue.checked) {
+                this.model.removeQueue(data.idx);
+                console.debug('[Lobby] queue:remove', sender);
+            }
+            _queueSync();
+        });
+        this.network.onPacket('queue:move', (data, sender) => {
+            if (this.view.hostControls.rearrangeQueue.checked) {
+                this.model.moveQueue(data.idx, data.dest);
+                console.debug('[Lobby] queue:move', sender);
+            }
+            _queueSync();
+            _playbackSync();
+        });
+
+        this.network.onPacket('playback:play', async (data, sender) => {
+            if (this.view.hostControls.pausePlay.checked) {
+                await this.model.resume();
+                console.debug('[Lobby] playback:play', sender);
+            }
+            _queueSync();
+            _playbackSync();
+        });
+        this.network.onPacket('playback:pause', (data, sender) => {
+            if (this.view.hostControls.pausePlay.checked) {
+                this.model.pause();
+                console.debug('[Lobby] playback:play', sender);
+            }
+            _playbackSync();
+        });
+        this.network.onPacket('playback:skip', async (data, sender) => {
+            if (this.view.hostControls.skip.checked) {
+                await this.model.skip();
+                console.debug('[Lobby] playback:skip', sender);
+            }
+            _queueSync();
+            _playbackSync();
+        });
+        this.network.onPacket('playback:seek', async (data, sender) => {
+            if (this.view.hostControls.skip.checked) {
+                await this.model.seek(data.time);
+                console.debug('[Lobby] playback:seek', sender);
+            }
+            _queueSync();
+            _playbackSync();
+        });
+    }
+
+    /**
+     * initializes client connection, automatically joins room and registers packet behavior
+     */
+    async _clientNetworking() {
+        // initialize client and join room
+        await this.network.initUser({
+            onStart: (id) => console.debug(`[User] User started with id ${id}`),
+            onConnection: (conn) => console.debug(`[User] Connection started with ${conn.peer.id}`),
+            onOpen: (conn) => console.debug(`[User] Connection opened with ${conn.peer.id}`),
+            onClose: (conn) => console.debug(`[User] Connection closed with ${conn.peer.id}`),
+            onData: (data) => console.debug(`[User] Data received:`, data),
+        });
+
+        await this.network.joinLobby(this.view.roomId);
+
+        // register packet callbacks
+        this.network.onPacket('queue:sync', (data, sender) => {
+            const recQueue = data.queue.map(Track.fromJSON);
+            this.model.setQueue(recQueue);
+        });
+        this.network.onPacket('playback:sync', async (data, sender) => {
+            const paused = data.paused;
+            if (paused) {
+                await this.model.pause();
+                console.debug('Paused from playback:sync');
+            } else {
+                await this.model.resume();
+                console.debug('Played from playback:sync');
+            }
+
+            if (!data.track) {
+                this.view.displayTrack(null);
+                return console.debug('no track in playback');
+            }
+
+            const track = Track.fromJSON(data.track);
+
+            if (track.uuid !== this.model.currentTrack?.uuid)
+                await this.model.load(track);
+
+            const deltaTime = Date.now() - data.sentTimestamp;
+            const uTime = track.time + (paused ? 0 : deltaTime)/1000.0;
+            const dif = Math.abs(this.model.currentTrack.time - uTime);
+            if (dif > this.DESYNC_THRESHOLD) {
+                await this.model.seek(uTime);
+                console.debug(`Re-syncing playback! Caught ${dif}s lag`);
+            }
+        });
+    }
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
     const MODEL = new Model();
     const VIEW = new View();
     const CONTROLLER = new Controller(MODEL, VIEW);
 
-    MODEL.addCallbacks({});
+    await CONTROLLER.init();
 
     window._wraps = {MODEL, VIEW, CONTROLLER};
     console.log("SETUP COMPLETE");

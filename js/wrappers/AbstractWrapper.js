@@ -6,6 +6,13 @@ export default class AbstractWrapper {
     getType() { throw new Error(`[AbstractWrapper] getType()`) }
 
     /**
+     * Fetch song metadata from the provided service for a specific uri
+     * @param {string} uri wrapper-specific url to fetch details for
+     * @returns {Promise<{title: string, author: string, duration: Number}>}
+     */
+    async fetchUri(uri) { throw new Error(`[AbstractWrapper] fetchUri("${uri}")`) }
+
+    /**
      * Plays the audio from the provided uri
      * @param {string} uri wrapper-specific url to parse and play
      */
@@ -27,13 +34,8 @@ export default class AbstractWrapper {
     async getCurrentTime() { throw new Error("[AbstractWrapper] getCurrentTime()") }
 
     /**
-     * @return {Promise<Number>} returns the total media length (in seconds)
-     */
-    async getDuration() { throw new Error("[AbstractWrapper] getDuration()") }
-
-    /**
      * Sets the time of the current playing media
-     * @param {Number} time the time to set current media
+     * @param {Number} time the time (in seconds) to set current media
      */
     async seek(time) { throw new Error(`[AbstractWrapper] playUri("${time}")`) }
 
@@ -72,9 +74,10 @@ export class Track {
         };
     }
 
-    static fromJSON({ source, id, uri, title, author, duration, addedBy, uuid }) {
+    static fromJSON({ source, id, uri, title, author, duration, addedBy, uuid, time }) {
         const v = new Track(source, id, uri, addedBy, title, author, duration);
         if (uuid) v.uuid = uuid;
+        if (time) v.time = time;
         return v;
     }
 }

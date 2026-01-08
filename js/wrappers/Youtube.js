@@ -22,6 +22,8 @@ export default class YouTubeWrapper extends AbstractWrapper {
         };
     }
 
+    getType() { return 'youtube'; }
+
     async _waitForApiReady(timeoutMs = 10000) {
         const start = Date.now();
         while (!this.apiReady) {
@@ -83,6 +85,41 @@ export default class YouTubeWrapper extends AbstractWrapper {
         return null;
     }
 
+    async fetchUri(uri) {
+        const videoId = this.extractVideoId(uri);
+        if (!videoId) {
+            throw new Error('[YouTubeWrapper] Invalid YouTube URI');
+        }
+
+        const oembedUrl =
+            `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+
+        let title, author;
+        try {
+            const res = await fetch(oembedUrl);
+            if (!res.ok) throw new Error('oEmbed fetch failed');
+            const data = await res.json();
+            title = data.title;
+            author = data.author_name;
+        } catch (err) {
+            console.error('[YouTubeWrapper] oEmbed error', err);
+            throw err;
+        }
+
+        await this._ensurePlayer(videoId);
+
+        let duration = -1;
+        try {
+            this.player.cueVideoById(videoId);
+            await new Promise(r => setTimeout(r, 200));
+            duration = this.player.getDuration();
+        } catch (err) {
+            console.warn('[YouTubeWrapper] duration fetch failed', err);
+        }
+
+        return { title, author, duration };
+    }
+
     async playUri(uri) {
         const videoId = this.extractVideoId(uri);
         if (!videoId) {
@@ -139,18 +176,6 @@ export default class YouTubeWrapper extends AbstractWrapper {
         } catch (e) {
             console.warn('[YouTubeWrapper] getCurrentTime failed', e);
             return 0;
-        }
-    }
-
-    async getDuration() {
-        if (!this.player || typeof this.player.getDuration !== 'function') return null;
-        try {
-            const d = this.player.getDuration();
-            if (!d || isNaN(d) || d === 0) return null;
-            return d;
-        } catch (e) {
-            console.warn('[YouTubeWrapper] getDuration failed', e);
-            return null;
         }
     }
 

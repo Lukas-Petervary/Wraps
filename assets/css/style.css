@@ -3,6 +3,8 @@ body { font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "
 :root {
     --accent-color-primary: #4338ca;
     --accent-color-secondary: #7e22ce;
+    --color-bright: #e4e4e4;
+    --color-dark: #2b2b2b;
 }
 
 [disabled] { opacity: .5; }

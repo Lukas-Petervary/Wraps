@@ -103,46 +103,29 @@ export default class YouTubeWrapper extends AbstractWrapper {
             author = data.author_name;
         } catch (err) {
             console.error('[YouTubeWrapper] oEmbed error', err);
-            throw err;
         }
 
-        await this._ensurePlayer(videoId);
-
-        let duration = -1;
-        try {
-            this.player.cueVideoById(videoId);
-            await new Promise(r => setTimeout(r, 200));
-            duration = this.player.getDuration();
-        } catch (err) {
-            console.warn('[YouTubeWrapper] duration fetch failed', err);
-        }
-
-        return { title, author, duration };
+        // duration can't be fetched via oembed, so set it to 8 and let the player fetch it via player
+        return { title, author, duration: 8 };
     }
 
-    async playUri(uri) {
-        const videoId = this.extractVideoId(uri);
+    async playTrack(track) {
+        const videoId = this.extractVideoId(track.uri);
         if (!videoId) {
-            console.warn('[YouTubeWrapper] Could not extract video id from', uri);
+            console.warn('[YouTubeWrapper] Could not extract video id from', track.uri);
             return;
         }
 
-        this.currentUri = uri;
-
-        // ensure player exists
+        this.currentUri = track.uri;
         await this._ensurePlayer(videoId);
 
-        // load and play
         try {
-            // if same video, use playVideo; otherwise load by id
-            const currentId = (this.player && this.player.getVideoData) ? this.player.getVideoData().video_id : null;
-            if (currentId === videoId) {
-                // play from start
-                this.player.playVideo();
-            } else {
-                this.player.loadVideoById(videoId);
-            }
-            // attempt autoplay; note: browsers may require user gesture.
+            const currentId = this.player?.getVideoData()?.video_id;
+
+            if (currentId === videoId) this.player.playVideo();
+            else this.player.loadVideoById(videoId);
+
+            track.duration = this.player?.getDuration() || -1;
         } catch (err) {
             console.error('[YouTubeWrapper] playUri error', err);
             throw err;
@@ -150,40 +133,27 @@ export default class YouTubeWrapper extends AbstractWrapper {
     }
 
     async pause() {
-        if (this.player && typeof this.player.pauseVideo === 'function') {
-            try { this.player.pauseVideo(); } catch (e) { console.warn(e); }
-        }
+        try { this.player?.pauseVideo(); } catch (e) { console.warn(e); }
     }
 
     async resume() {
-        if (this.player && typeof this.player.playVideo === 'function') {
-            try { this.player.playVideo(); } catch (e) { console.warn(e); }
-        }
-    }
-
-    async getState() {
-        if (!this.player || !this.player.getPlayerState) return {};
-        const raw = this.player.getPlayerState();
-        const map = { 0: 'ended', 1: 'playing', 2: 'paused', 3: 'buffering', 5: 'cued' };
-        return { state: map[raw] || 'unknown' };
+        try { this.player?.playVideo(); } catch (e) { console.warn(e); }
     }
 
     // return seconds (number)
     async getCurrentTime() {
-        if (!this.player || typeof this.player.getCurrentTime !== 'function') return 0;
+        if (!this.player || !this.player.getCurrentTime) return -1;
         try {
-            return this.player.getCurrentTime();
+            return this.player?.getCurrentTime() || -1;
         } catch (e) {
             console.warn('[YouTubeWrapper] getCurrentTime failed', e);
-            return 0;
+            return -1;
         }
     }
 
     async seek(seconds) {
-        if (!this.player || typeof this.player.seekTo !== 'function') return;
         try {
-            // second parameter "allowSeekAhead" set true
-            this.player.seekTo(seconds, true);
+            this.player?.seekTo(seconds, true);
         } catch (e) {
             console.warn('[YouTubeWrapper] seek failed', e);
         }

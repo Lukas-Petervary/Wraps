@@ -20,6 +20,7 @@ class Model {
         this.queue = [];
 
         this.paused = true;
+        this.autoplay = false;
 
         this.addCallbacks({});
     }
@@ -57,11 +58,14 @@ class Model {
      * @param {Track} track the track to play
      */
     async load(track) {
-        if (!track) return;
+        if (!track) {
+            await this.pause();
+            return;
+        }
 
         this.currentTrack = track;
         this.currentWrapper = this.wrappers[this.currentTrack.source];
-        await this.currentWrapper.playUri(this.currentTrack.uri)
+        await this.currentWrapper.playTrack(this.currentTrack);
         this.paused = false;
 
         this.events.onLoad(track);
@@ -81,7 +85,7 @@ class Model {
     }
 
     /**
-     * Pauses current track, otherwise defaults to unpaused
+     * Pauses current track if available, and sets model to paused
      */
     async pause() {
         await this.currentWrapper?.pause();
@@ -100,17 +104,12 @@ class Model {
     }
 
     /**
-     * Skips the song currently playing, and automatically plays the next in queue
+     * Skips the song currently playing and clears currently playing track
      */
     async skip() {
-        if (this.queue.length === 0) {
-            this.currentWrapper?.pause();
-            this.currentTrack = null;
-            return;
-        }
-        this.currentWrapper.pause();
-        await this.load(this.queue.shift());
-        this.events.onSkip(this.currentTrack);
+        this.currentWrapper?.pause();
+        this.currentTrack = this.currentWrapper = null;
+        await this.events.onSkip(this.currentTrack);
     }
 
     /**
@@ -194,6 +193,8 @@ class View {
         this.playerControls = {
             playButton: document.getElementById('playBtn'),
             pauseButton: document.getElementById('pauseBtn'),
+            restartButton: document.getElementById('restartBtn'),
+            skipButton: document.getElementById('skipBtn'),
             seekBar: document.getElementById('seekBar'),
             volumeBar: document.getElementById('volume'),
         };
@@ -229,6 +230,8 @@ class View {
         const _reg = (a,b,c) => a.addEventListener(b, c);
         _reg(this.playerControls.playButton, 'click', async e => await this.events.playButtonClick(e));
         _reg(this.playerControls.pauseButton, 'click', async e => await this.events.pauseButtonClick(e));
+        _reg(this.playerControls.skipButton, 'click', async e => await this.events.skipButtonClick(e));
+        _reg(this.playerControls.restartButton, 'click', async e => await this.events.restartButtonClick(e));
         _reg(this.playerControls.seekBar, 'click', async e => await this.events.seekBarInteract(e));
         _reg(this.playerControls.volumeBar, 'click', e => this.events.volumeBarInteract(e));
 
@@ -316,6 +319,8 @@ class View {
         this.events = Object.assign(this.events ?? {
             playButtonClick: _,
             pauseButtonClick: _,
+            skipButtonClick: _,
+            removeButtonClick: _,
             seekBarInteract: _,
             volumeBarInteract: _,
 
@@ -357,14 +362,6 @@ class View {
     }
 
     /**
-     * Sets the seek bar time to a specific number of seconds
-     * @param {Number} time
-     */
-    setSeekBarTime(time) {
-        this.playerControls.seekBar.value = time;
-    }
-
-    /**
      * Returns an html string for a queue entry representing the provided track
      * @param {Track} track the track to create a queue entry for
      * @return {string} the formatted queue display element for a provided track
@@ -373,7 +370,7 @@ class View {
         return `
 <li draggable="true" data-uuid="${track.uuid}">
     <static-partial 
-        src="/assets/partials/queueElement.html" 
+        src="../assets/partials/queueElement.html" 
         params='{
             "title":"${track.title}",
             "author":"${track.author}",
@@ -469,8 +466,21 @@ class Controller {
 
                 const curTime = await this.model.currentWrapper?.getCurrentTime();
                 _setVisualTime(curTime);
-                updateInterval = setInterval(async () => {
-                    _setVisualTime(this.model.currentTrack.time + 1);
+                updateInterval = updateInterval ?? setInterval(async () => {
+                    if (!this.model.currentTrack) {
+                        await this.model.pause();
+                        return;
+                    }
+
+                    let t = this.model.currentTrack.time + 1;
+                    if (t >= this.model.currentTrack.duration) {
+                        t = await this.model.currentWrapper?.getCurrentTime();
+
+                        if (t >= this.model.currentTrack.duration)
+                            await this.model.skip();
+                    }
+
+                    _setVisualTime(t);
                 }, 1000);
                 _rerender();
             },
@@ -481,13 +491,19 @@ class Controller {
                 const curTime = await this.model.currentWrapper?.getCurrentTime();
                 _setVisualTime(curTime);
                 clearInterval(updateInterval);
+                updateInterval = null;
+            },
+            onSkip: async () => {
+                await this.model.pause();
+                if (this.model.autoplay)
+                    await this.model.resume();
+                _rerender();
             },
         });
 
         // redraw UI on model changes
         this.model.addCallbacks({
             onSeek: (track, time) => _setVisualTime(time),
-            onSkip: _rerender,
             onLoad: _rerender,
             onAddQueue: _rerender,
             onRemoveQueue: _rerender,
@@ -519,6 +535,16 @@ class Controller {
                 if (this.view.isHost)
                     await this.model.pause();
                 _packet('playback:pause');
+            },
+            skipButtonClick: async _ => {
+                if (this.view.isHost)
+                    await this.model.skip();
+                _packet('playback:skip');
+            },
+            restartButtonClick: async _ => {
+                if (this.view.isHost)
+                    await this.model.seek(0);
+                _packet('playback:seek', {time: 0});
             },
             seekBarInteract: async e => {
                 if (this.view.isHost)
@@ -649,18 +675,11 @@ class Controller {
         });
         this.network.onPacket('playback:sync', async (data, sender) => {
             const paused = data.paused;
-            if (paused) {
-                await this.model.pause();
-                console.debug('Paused from playback:sync');
-            } else {
-                await this.model.resume();
-                console.debug('Played from playback:sync');
-            }
+            if (paused) await this.model.pause();
+            else await this.model.resume();
 
-            if (!data.track) {
-                this.view.displayTrack(null);
-                return console.debug('no track in playback');
-            }
+            if (!data.track)
+                return this.view.displayTrack(null);
 
             const track = Track.fromJSON(data.track);
 

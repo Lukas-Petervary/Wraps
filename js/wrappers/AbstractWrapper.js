@@ -13,10 +13,10 @@ export default class AbstractWrapper {
     async fetchUri(uri) { throw new Error(`[AbstractWrapper] fetchUri("${uri}")`) }
 
     /**
-     * Plays the audio from the provided uri
-     * @param {string} uri wrapper-specific url to parse and play
+     * Plays the audio from the provided Track
+     * @param {Track} track wrapper-specific url to parse and play
      */
-    async playUri(uri) { throw new Error(`[AbstractWrapper] playUri("${uri}")`) }
+    async playTrack(track) { throw new Error(`[AbstractWrapper] playTrack("${track}")`) }
 
     /**
      * Pauses playback of current track
